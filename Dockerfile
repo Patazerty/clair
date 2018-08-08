@@ -12,14 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM golang:1.10-alpine AS build
+FROM golang:1.10-alpine AS build-clair
 ADD .   /go/src/github.com/coreos/clair/
 WORKDIR /go/src/github.com/coreos/clair/
 RUN go build github.com/coreos/clair/cmd/clair
 
+FROM alpine AS build-qcowmount
+RUN apk add --no-cache wget build-base fuse-dev
+RUN wget https://github.com/libyal/libqcow/releases/download/20170222/libqcow-alpha-20170222.tar.gz && tar xzvf libqcow-alpha-20170222.tar.gz
+RUN cd libqcow-20170222 && ./configure && make && make install
+
 FROM alpine:3.8
-COPY --from=build /go/src/github.com/coreos/clair/clair /clair
-RUN apk add --no-cache git rpm xz ca-certificates dumb-init
+COPY --from=build-clair /go/src/github.com/coreos/clair/clair /clair
+COPY --from=build-qcowmount /usr/local/bin/qcowmount /usr/bin/qcowmount
+COPY --from=build-qcowmount /usr/local/lib /usr/local/lib
+RUN apk add --no-cache git rpm xz ca-certificates dumb-init fuse util-linux
 ENTRYPOINT ["/usr/bin/dumb-init", "--", "/clair"]
 VOLUME /config
 EXPOSE 6060 6061
