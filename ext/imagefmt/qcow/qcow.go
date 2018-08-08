@@ -1,4 +1,4 @@
-//  Package qcow implements qcow2 images support for clair
+// Package qcow implements qcow2 images support for clair
 package qcow
 
 import (
@@ -15,9 +15,10 @@ import (
 	"math/rand"
 	"fmt"
 
+	log "github.com/sirupsen/logrus"
 
 	"github.com/coreos/clair/ext/imagefmt"
-	"github.com/coreos/clair/pkg/tarutil"
+        "github.com/coreos/clair/pkg/tarutil"
 )
 
 
@@ -47,19 +48,24 @@ func writeImg(img io.ReadCloser, path string) (error) {
 
 func getPartsOffsets(path string) ([]string, error) {
 	cmd := exec.Command("/bin/sh", "-c", "fdisk -l " + path)
-	output, err := cmd.Output()
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("Could not get qcow partitions: %s", err.Error())
+		return nil, fmt.Errorf("Could not get qcow partitions: %s: %s", err.Error(), string(output))
 	}
+	log.WithFields(log.Fields{"output": string(output), "block_file": path}).Debug("Fdisk output")
 	var parts = make([]string, 0)
 	scanner := bufio.NewScanner(bytes.NewBuffer(output))
 	for scanner.Scan() {
 		// Linux filesystem -> gpt partition
 		if strings.Contains(scanner.Text(), "Linux filesystem") {
 			parts = append(parts, strings.Fields(scanner.Text())[1])
+			log.WithFields(log.Fields{"offset": strings.Fields(scanner.Text())[1],
+				"block_file": path}).Debug("Found gpt partition")
 		// Linux -> msdos partition
 		} else if strings.Contains(scanner.Text(), "Linux") {
 			parts = append(parts, strings.Fields(scanner.Text())[2])
+			log.WithFields(log.Fields{"offset": strings.Fields(scanner.Text())[2],
+				"block_file": path}).Debug("Found msdos partition")
 		}
 	}
 	return parts, nil
@@ -81,9 +87,11 @@ func mountImg(layerReader io.ReadCloser) (string, error) {
 	if err := writeImg(layerReader, "/tmp/img" + curId); err != nil {
 		return curId, err
 	}
-	cmd := exec.Command("/bin/sh", "-c", fmt.Sprintf("qcowmount -X allow_other /tmp/img%s /mnt/qcow%s", curId, curId))
-	if err := cmd.Run(); err != nil {
-		return curId, fmt.Errorf("Could not mount qcow image: %s", err)
+	strcmd := fmt.Sprintf("qcowmount -X allow_other /tmp/img%s /mnt/qcow%s", curId, curId)
+	log.WithFields(log.Fields{"command": strcmd}).Debug("System exec")
+	cmd := exec.Command("/bin/sh", "-c", strcmd)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return curId, fmt.Errorf("Could not mount qcow image: %s: %s", err, string(output))
 	}
 	offsets, err := getPartsOffsets(filepath.Join("/mnt/qcow" + curId, "qcow1"))
 	if err != nil {
@@ -94,9 +102,10 @@ func mountImg(layerReader io.ReadCloser) (string, error) {
 			return curId, err
 		}
 		strcmd := fmt.Sprintf("mount -o offset=$((512*%s)),ro %s %s", offset, filepath.Join("/mnt/qcow" + curId, "qcow1"), filepath.Join("/mnt/parts" + curId, offset))
+		log.WithFields(log.Fields{"command": strcmd}).Debug("System exec")
 		cmd := exec.Command("/bin/sh", "-c",  strcmd)
-		if err := cmd.Run(); err != nil {
-			return curId, fmt.Errorf("Could not mount qcow partitions: %s", err)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return curId, fmt.Errorf("Could not mount qcow partitions: %s: %s", err, string(output))
 		}
 	}
 	return curId, nil
@@ -106,13 +115,13 @@ func umountImg(curId string) (error) {
 	defer atomic.AddInt32(&scanCount, -1)
 	umountcmd := fmt.Sprintf("umount /mnt/parts%s/*", curId)
 	cmd := exec.Command("/bin/sh", "-c", umountcmd)
-	if err := cmd.Run(); err != nil {
-		return err
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("Could not umount part: %s: %s", err, string(output))
 	}
 	umountcmd = fmt.Sprintf("fusermount -u /mnt/qcow%s", curId)
 	cmd = exec.Command("/bin/sh", "-c", umountcmd)
-	if err := cmd.Run(); err != nil {
-		return err
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("Could not umount block file: %s: %s", err, string(output))
 	}
 	os.RemoveAll("/mnt/parts" + curId)
 	os.RemoveAll("/mnt/qcow" + curId)
