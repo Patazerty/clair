@@ -155,6 +155,7 @@ func (u *updater) pullRepository() (commit string, err error) {
 	if _, pathExists := os.Stat(u.repositoryLocalPath); u.repositoryLocalPath == "" || os.IsNotExist(pathExists) {
 		// Create a temporary folder to store the repository.
 		if u.repositoryLocalPath, err = ioutil.TempDir(os.TempDir(), "ubuntu-cve-tracker"); err != nil {
+			log.WithError(err).Debug("Filesystem error")
 			return "", vulnsrc.ErrFilesystem
 		}
 		cmd := exec.Command("git", "clone", trackerURI, ".")

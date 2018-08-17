@@ -187,6 +187,7 @@ func (u *updater) pullRepository() (commit string, err error) {
 	// If the repository doesn't exist, clone it.
 	if _, pathExists := os.Stat(u.repositoryLocalPath); u.repositoryLocalPath == "" || os.IsNotExist(pathExists) {
 		if u.repositoryLocalPath, err = ioutil.TempDir(os.TempDir(), "alpine-secdb"); err != nil {
+			log.WithError(err).Debug("Filesystem errror")
 			return "", vulnsrc.ErrFilesystem
 		}
 
